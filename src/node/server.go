@@ -28,7 +28,9 @@ type Server struct {
 }
 
 type OnionPacket struct {
-	EncryptedData []byte `json:"encrypted_data"`
+	EphemeralKey []byte `json:"ephemeral_key"`
+	Nonce        []byte `json:"nonce"`
+	Ciphertext   []byte `json:"ciphertext"`
 }
 type UnWrappedPayload struct {
 	NextNode     string `json:"next_node"` // next node or empty if destination
@@ -121,29 +123,45 @@ func (s *Server) HandleGetMessages(w http.ResponseWriter, r *http.Request) {
 
 }
 func (s *Server) HandleOnion(w http.ResponseWriter, r *http.Request) {
-
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+
 	var packet OnionPacket
 	if err := json.NewDecoder(r.Body).Decode(&packet); err != nil {
-		http.Error(w, "Invalid onion packet", http.StatusBadRequest)
+		http.Error(w, "Invalid outer onion packet format", http.StatusBadRequest)
 		return
 	}
-	//unwrap
+
+	plaintext, err := crypto.DecryptLayer(s.PrivateKey, packet.EphemeralKey, packet.Nonce, packet.Ciphertext)
+	if err != nil {
+		http.Error(w, "Decryption failed: unauthorized or tampered layer", http.StatusUnauthorized)
+		return
+	}
+
 	var payload UnWrappedPayload
-	if err := json.Unmarshal(packet.EncryptedData, &payload); err != nil {
-		http.Error(w, "Failed to unwrap layer", http.StatusBadRequest)
+	if err := json.Unmarshal(plaintext, &payload); err != nil {
+		http.Error(w, "Malformed decrypted payload structure", http.StatusBadRequest)
 		return
 	}
+
 	if payload.NextNode != "" {
-		//next node is present, this node is not destination
-		nextPacket := OnionPacket{EncryptedData: payload.InnerPayload}
-		body, _ := json.Marshal(nextPacket)
+		var nextPacket OnionPacket
+		if err := json.Unmarshal(payload.InnerPayload, &nextPacket); err != nil {
+			http.Error(w, "Inner payload is not a valid OnionPacket struct", http.StatusBadRequest)
+			return
+		}
+
+		body, err := json.Marshal(nextPacket)
+		if err != nil {
+			http.Error(w, "Failed to marshal forwarded packet", http.StatusInternalServerError)
+			return
+		}
+
 		resp, err := http.Post(payload.NextNode+"/onion", "application/json", bytes.NewReader(body))
 		if err != nil {
-			http.Error(w, "Failed to forward packet", http.StatusBadGateway)
+			http.Error(w, "Failed to forward onion packet to next hop", http.StatusBadGateway)
 			return
 		}
 		defer resp.Body.Close()
@@ -152,15 +170,13 @@ func (s *Server) HandleOnion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	//this is destination node
 	localReq, err := http.NewRequest(payload.Method, payload.Path, bytes.NewReader(payload.InnerPayload))
 	if err != nil {
-		http.Error(w, "Invalid inner request", http.StatusBadRequest)
+		http.Error(w, "Invalid final internal request parameters", http.StatusBadRequest)
 		return
 	}
 
 	s.Router().ServeHTTP(w, localReq)
-
 }
 func (s *Server) Router() http.Handler {
 	mux := http.NewServeMux()
