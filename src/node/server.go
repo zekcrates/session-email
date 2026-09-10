@@ -1,6 +1,8 @@
 package node
 
 import (
+	"bytes"
+	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -20,8 +22,29 @@ type Message struct {
 type Server struct {
 	mu       sync.RWMutex
 	messages []Message
+
+	PrivateKey ed25519.PrivateKey
+	PublicKey  string
 }
 
+type OnionPacket struct {
+	EncryptedData []byte `json:"encrypted_data"`
+}
+type UnWrappedPayload struct {
+	NextNode     string `json:"next_node"` // next node or empty if destination
+	InnerPayload []byte `json:"inner_payload"`
+	Path         string `json:"path"`
+	Method       string `json:"method"`
+}
+
+func NewServer(privKey ed25519.PrivateKey) *Server {
+	pubKey := privKey.Public().(ed25519.PublicKey)
+	return &Server{
+		messages:   make([]Message, 0),
+		PrivateKey: privKey,
+		PublicKey:  hex.EncodeToString(pubKey),
+	}
+}
 func (s *Server) HandlePostMessage(w http.ResponseWriter, r *http.Request) {
 
 	if r.Method != http.MethodPost {
@@ -97,7 +120,48 @@ func (s *Server) HandleGetMessages(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(result)
 
 }
+func (s *Server) HandleOnion(w http.ResponseWriter, r *http.Request) {
 
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var packet OnionPacket
+	if err := json.NewDecoder(r.Body).Decode(&packet); err != nil {
+		http.Error(w, "Invalid onion packet", http.StatusBadRequest)
+		return
+	}
+	//unwrap
+	var payload UnWrappedPayload
+	if err := json.Unmarshal(packet.EncryptedData, &payload); err != nil {
+		http.Error(w, "Failed to unwrap layer", http.StatusBadRequest)
+		return
+	}
+	if payload.NextNode != "" {
+		//next node is present, this node is not destination
+		nextPacket := OnionPacket{EncryptedData: payload.InnerPayload}
+		body, _ := json.Marshal(nextPacket)
+		resp, err := http.Post(payload.NextNode+"/onion", "application/json", bytes.NewReader(body))
+		if err != nil {
+			http.Error(w, "Failed to forward packet", http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+
+		w.WriteHeader(resp.StatusCode)
+		return
+	}
+
+	//this is destination node
+	localReq, err := http.NewRequest(payload.Method, payload.Path, bytes.NewReader(payload.InnerPayload))
+	if err != nil {
+		http.Error(w, "Invalid inner request", http.StatusBadRequest)
+		return
+	}
+
+	s.Router().ServeHTTP(w, localReq)
+
+}
 func (s *Server) Router() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/messages", func(w http.ResponseWriter, r *http.Request) {
@@ -110,5 +174,6 @@ func (s *Server) Router() http.Handler {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
 	})
+	mux.HandleFunc("/onion", s.HandleOnion)
 	return mux
 }
