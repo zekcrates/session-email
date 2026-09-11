@@ -2,62 +2,110 @@ package main
 
 import (
 	"bytes"
+	"crypto/ed25519"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
-	"net/http/httptest"
-	"time"
 
 	"session-email/src/crypto"
+	"session-email/src/message"
 	"session-email/src/node"
 )
 
-func main() {
-	fmt.Println("=== node/server auth-GET check ===")
+func mustHex(s string) []byte {
+	b, _ := hex.DecodeString(s)
+	return b
+}
 
-	srv := &node.Server{}
-	ts := httptest.NewServer(srv.Router())
-	defer ts.Close()
+func main() {
+	keyA, Apriv, _ := crypto.GeneratePublicPrivatePair()
+	keyB, Bpriv, _ := crypto.GeneratePublicPrivatePair()
+	keyC, Cpriv, _ := crypto.GeneratePublicPrivatePair()
+
+	srvA := node.NewServer(Apriv)
+	srvB := node.NewServer(Bpriv)
+	srvC := node.NewServer(Cpriv)
+
+	go http.ListenAndServe(":8001", srvA.Router())
+	go http.ListenAndServe(":8002", srvB.Router())
+	go http.ListenAndServe(":8003", srvC.Router())
+	fmt.Println("Node A on :8001")
+	fmt.Println("Node B on :8002")
+	fmt.Println("Node C (Bob's swarm) on :8003")
+	alicePub, alicePriv, _ := crypto.GeneratePublicPrivatePair()
+	aliceID := crypto.GenerateAccountId(alicePub)
 
 	bobPub, bobPriv, _ := crypto.GeneratePublicPrivatePair()
 	bobID := crypto.GenerateAccountId(bobPub)
 
-	payload := []byte("hello bob")
-	body, _ := json.Marshal(map[string]any{
+	fmt.Printf("Alice ID: %s\nBob ID:   %s\n", aliceID, bobID)
+
+	msg := message.Message{
+		From:    aliceID,
+		To:      bobID,
+		Subject: "just checking if this works",
+		Body:    "just setting up my mail",
+	}
+
+	padded := message.SerializeMessage(msg)
+	signHex := crypto.SignMessage(alicePriv, padded)
+	packed := message.BuildSignedMessage(padded, []byte(alicePub), mustHex(signHex))
+	env, _ := crypto.EncryptMessage(packed, bobPub)
+	fmt.Printf("Envelope: %d bytes\n", len(env))
+	reqBody, _ := json.Marshal(map[string]any{
 		"recipient": bobID,
-		"payload":   payload,
+		"payload":   env,
 	})
-	resp, err := http.Post(ts.URL+"/messages", "application/json", bytes.NewReader(body))
+
+	inner, _ := json.Marshal(node.UnWrappedPayload{
+		NextNode:     "",
+		Method:       "POST",
+		Path:         "/messages",
+		InnerPayload: reqBody,
+	})
+
+	packetC, _ := node.BuildOnionPacket(inner, keyC)
+
+	mid, _ := json.Marshal(node.UnWrappedPayload{
+		NextNode:     "http://localhost:8003",
+		InnerPayload: packetC,
+	})
+
+	packetB, _ := node.BuildOnionPacket(mid, keyB)
+
+	outer, _ := json.Marshal(node.UnWrappedPayload{
+		NextNode:     "http://localhost:8002",
+		InnerPayload: packetB,
+	})
+	packetA, _ := node.BuildOnionPacket(outer, keyA)
+	fmt.Printf("Onion: %d bytes\n", len(packetA))
+	resp, err := http.Post("http://localhost:8001/onion", "application/json", bytes.NewReader(packetA))
 	if err != nil {
 		log.Fatal(err)
 	}
-	var out map[string]string
-	_ = json.NewDecoder(resp.Body).Decode(&out)
-	resp.Body.Close()
-	fmt.Printf("POST /messages -> %d id=%s\n", resp.StatusCode, out["id"])
-	if resp.StatusCode != http.StatusCreated {
-		log.Fatalf("FAIL: want 201, got %d", resp.StatusCode)
-	}
+	fmt.Printf("Sent → A responded %d\n", resp.StatusCode)
 
-	// signed GET
-	stamp := fmt.Sprintf("%d", time.Now().Unix())
-	sig := crypto.SignMessage(bobPriv, []byte(bobID+":"+stamp))
-	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/messages?recipient="+bobID, nil)
-	req.Header.Set("X-Timestamp", stamp)
-	req.Header.Set("X-Signature", sig)
-	resp2, err := http.DefaultClient.Do(req)
+	sw := node.NewSwarm("bob-swarm", []string{"http://localhost:8003"})
+	msgs, err := sw.FetchMessages(bobID, bobPriv)
 	if err != nil {
 		log.Fatal(err)
 	}
-	var msgs []node.Message
-	_ = json.NewDecoder(resp2.Body).Decode(&msgs)
-	resp2.Body.Close()
-	fmt.Printf("GET (auth) -> %d n=%d\n", resp2.StatusCode, len(msgs))
-	if resp2.StatusCode != 200 || len(msgs) != 1 || string(msgs[0].Payload) != string(payload) {
-		log.Fatalf("FAIL: mismatch: %+v", msgs)
-	}
-	_ = bobPub
+	fmt.Printf("Bob fetched %d message(s)\n", len(msgs))
 
-	fmt.Println("PASS: server store + auth fetch works")
+	opened, _ := crypto.DecryptMessage(msgs[0].Payload, bobPriv)
+	gotPadded := opened[:len(opened)-96]
+	gotPub := opened[len(opened)-96 : len(opened)-64]
+	gotSig := opened[len(opened)-64:]
+
+	if !crypto.VerifyMessage(ed25519.PublicKey(gotPub), gotPadded, hex.EncodeToString(gotSig)) {
+		log.Fatal("signature failed")
+	}
+
+	final := message.DeserializeMessage(gotPadded)
+	fmt.Printf("\n=== MESSAGE ===\n")
+	fmt.Printf("From:    %s\n", final.From)
+	fmt.Printf("Subject: %s\n", final.Subject)
+	fmt.Printf("Body:    %s\n", final.Body)
 }

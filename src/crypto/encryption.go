@@ -49,11 +49,6 @@ func EncryptMessage(message []byte, recvPublicKey ed25519.PublicKey) ([]byte, er
 
 }
 
-// Deprecated: misspelling kept for backward compatibility, use EncryptMessage.
-func EncrpytMessage(message []byte, recvPublicKey ed25519.PublicKey) ([]byte, error) {
-	return EncryptMessage(message, recvPublicKey)
-}
-
 func DecryptMessage(payload []byte, recvPrivateKey ed25519.PrivateKey) ([]byte, error) {
 	if len(payload) < 72 {
 		return nil, fmt.Errorf("payload too short")
