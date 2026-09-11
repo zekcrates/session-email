@@ -1,46 +1,21 @@
 package crypto
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
 	"crypto/ed25519"
-	"crypto/sha512"
+	"fmt"
 
-	"golang.org/x/crypto/curve25519"
+	"golang.org/x/crypto/nacl/box"
 )
 
 func DecryptLayer(privKey ed25519.PrivateKey, ephemeralPubKey []byte, nonce []byte, ciphertext []byte) ([]byte, error) {
-	curvePriv := ed25519PrivateKeyToCurve25519(privKey)
+	curvePriv := Ed25519PrivateKeyToX25519(privKey)
 
-	sharedSecret, err := curve25519.X25519(curvePriv, ephemeralPubKey)
-	if err != nil {
-		return nil, err
+	var ephPub [32]byte
+	copy(ephPub[:], ephemeralPubKey)
+
+	opened, ok := box.Open(nil, ciphertext, (*[24]byte)(nonce), &ephPub, &curvePriv)
+	if !ok {
+		return nil, fmt.Errorf("onion layer decryption failed")
 	}
-
-	block, err := aes.NewCipher(sharedSecret)
-	if err != nil {
-		return nil, err
-	}
-
-	aesgcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-
-	return aesgcm.Open(nil, nonce, ciphertext, nil)
-}
-
-func ed25519PrivateKeyToCurve25519(pk ed25519.PrivateKey) []byte {
-	seed := pk.Seed()
-
-	h := sha512.Sum512(seed)
-
-	out := make([]byte, 32)
-	copy(out, h[:32])
-
-	out[0] &= 248
-	out[31] &= 127
-	out[31] |= 64
-
-	return out
+	return opened, nil
 }

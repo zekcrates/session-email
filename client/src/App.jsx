@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import nacl from 'tweetnacl'
 import {
   accountIdToEdPub,
+  buildOnion,
   buildPackedEmail,
   decryptWith,
   encryptFor,
@@ -72,8 +73,16 @@ export default function App() {
   const [subject, setSubject] = useState('')
   const [body, setBody] = useState('')
   const [busy, setBusy] = useState(false)
+  const [circuit, setCircuit] = useState(null)
 
   useEffect(() => localStorage.setItem(LS_SERVER, serverUrl), [serverUrl])
+
+  useEffect(() => {
+    fetch(serverUrl.replace(/\/$/, '') + '/api/circuit')
+      .then((r) => r.json())
+      .then(setCircuit)
+      .catch(() => {})
+  }, [serverUrl])
 
   function handleGenerate() {
     const k = generateKeys()
@@ -92,7 +101,7 @@ export default function App() {
   }
 
   async function handleSend() {
-    if (!keys) return
+    if (!keys || !circuit || circuit.length === 0) return
     setBusy(true)
     try {
       const toTrim = to.trim()
@@ -101,14 +110,16 @@ export default function App() {
       const sig = nacl.sign.detached(padded, fromHex(keys.secretKeyHex))
       const packed = packSigned(padded, fromHex(keys.publicKeyHex), sig)
       const payload = encryptFor(packed, recipientEdPub)
-      const res = await fetch(`${serverUrl.replace(/\/$/, '')}/messages`, {
+
+      const onionJson = buildOnion({ recipient: toTrim, payload, circuit })
+      const entryNode = circuit[0]
+      const res = await fetch(entryNode.url + '/onion', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ recipient: toTrim, payload: toB64(payload) }),
+        body: onionJson,
       })
-      if (res.status !== 201) throw new Error(`server ${res.status}`)
-      const out = await res.json()
-      setSent((s) => [{ id: out.id, to: toTrim, subject, body, at: Math.floor(Date.now() / 1000) }, ...s])
+      if (res.status !== 201 && res.status !== 200) throw new Error(`onion ${res.status}`)
+      setSent((s) => [{ id: crypto.randomUUID(), to: toTrim, subject, body, at: Math.floor(Date.now() / 1000) }, ...s])
       setTo('')
       setSubject('')
       setBody('')
@@ -121,13 +132,13 @@ export default function App() {
   }
 
   async function handleRefresh() {
-    if (!keys) return
+    if (!keys || !circuit || circuit.length === 0) return
     setBusy(true)
     try {
-      const base = serverUrl.replace(/\/$/, '')
+      const storageNode = circuit[circuit.length - 1]
       const timestamp = String(Math.floor(Date.now() / 1000))
       const sigHex = signChallenge(keys.accountId, timestamp, fromHex(keys.secretKeyHex))
-      const res = await fetch(`${base}/messages?recipient=${encodeURIComponent(keys.accountId)}`, {
+      const res = await fetch(`${storageNode.url}/messages?recipient=${encodeURIComponent(keys.accountId)}`, {
         headers: { 'X-Timestamp': timestamp, 'X-Signature': sigHex },
       })
       if (res.status !== 200) throw new Error(`server ${res.status}`)

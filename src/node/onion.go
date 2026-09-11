@@ -1,23 +1,17 @@
 package node
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
 
-	"golang.org/x/crypto/curve25519"
+	"golang.org/x/crypto/nacl/box"
 
 	"session-email/src/crypto"
 )
 
 func BuildOnionPacket(payload []byte, recipientPub ed25519.PublicKey) ([]byte, error) {
-	var ephPriv [32]byte
-	if _, err := rand.Read(ephPriv[:]); err != nil {
-		return nil, err
-	}
-	ephPub, err := curve25519.X25519(ephPriv[:], curve25519.Basepoint)
+	ephPub, ephPriv, err := box.GenerateKey(rand.Reader)
 	if err != nil {
 		return nil, err
 	}
@@ -27,26 +21,12 @@ func BuildOnionPacket(payload []byte, recipientPub ed25519.PublicKey) ([]byte, e
 		return nil, err
 	}
 
-	shared, err := curve25519.X25519(ephPriv[:], recipX[:])
-	if err != nil {
-		return nil, err
-	}
-
-	block, err := aes.NewCipher(shared)
-	if err != nil {
-		return nil, err
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-
-	nonce := make([]byte, gcm.NonceSize())
-	ciphertext := gcm.Seal(nil, nonce, payload, nil)
+	var nonce [24]byte
+	ciphertext := box.Seal(nil, payload, &nonce, &recipX, ephPriv)
 
 	packet := OnionPacket{
-		EphemeralKey: ephPub,
-		Nonce:        nonce,
+		EphemeralKey: ephPub[:],
+		Nonce:        nonce[:],
 		Ciphertext:   ciphertext,
 	}
 	return json.Marshal(packet)

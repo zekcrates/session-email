@@ -127,3 +127,45 @@ export function decryptWith(payload, mySecretKey64) {
 export function signChallenge(recipient, timestamp, secretKey64) {
   return toHex(nacl.sign.detached(te.encode(`${recipient}:${timestamp}`), secretKey64))
 }
+
+/** Encrypt one onion layer: NaCl box matching Go DecryptLayer */
+export function encryptOnionLayer(payload, nodeEdPub) {
+  const recipX = ed2curve.convertPublicKey(nodeEdPub)
+  if (!recipX) throw new Error('bad node key')
+  const eph = nacl.box.keyPair()
+  const nonce = new Uint8Array(24)
+  const sealed = nacl.box(payload, nonce, recipX, eph.secretKey)
+  if (!sealed) throw new Error('box failed')
+  return {
+    ephemeral_key: toB64(eph.publicKey),
+    nonce: toB64(nonce),
+    ciphertext: toB64(sealed),
+  }
+}
+
+/**
+ * Build full onion for circuit.
+ * circuit = [{url, publicKey}, ...] outermost → innermost
+ * Returns the outermost OnionPacket JSON string to POST to circuit[0].url
+ */
+export function buildOnion({ recipient, payload, circuit }) {
+  const msgBody = JSON.stringify({ recipient, payload: toB64(payload) })
+  let innerPayload = te.encode(msgBody)
+
+  let nextNode = ''
+  for (let i = circuit.length - 1; i >= 0; i--) {
+    const node = circuit[i]
+    const nodePub = fromHex(node.publicKey)
+    const unwrapped = { next_node: nextNode, inner_payload: toB64(innerPayload) }
+    if (i === circuit.length - 1) {
+      unwrapped.method = 'POST'
+      unwrapped.path = '/messages'
+    }
+    const unwrappedBytes = te.encode(JSON.stringify(unwrapped))
+    const packet = encryptOnionLayer(unwrappedBytes, nodePub)
+    innerPayload = te.encode(JSON.stringify(packet))
+    nextNode = node.url
+  }
+
+  return new TextDecoder().decode(innerPayload)
+}
