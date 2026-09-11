@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import nacl from 'tweetnacl'
 import {
   accountIdToEdPub,
@@ -40,7 +40,7 @@ function fmtTime(ts) {
   const now = new Date()
   const sameDay = d.toDateString() === now.toDateString()
   if (sameDay) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-  return d.toLocaleDateString([], { month: 'short', day: 'numeric' })
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 
 const AVATAR_COLORS = ['bg-rose-500', 'bg-sky-500', 'bg-emerald-500', 'bg-amber-500', 'bg-violet-500', 'bg-teal-500']
@@ -55,6 +55,56 @@ function Avatar({ id, size = 'h-9 w-9 text-xs' }) {
     <span className={`flex ${size} shrink-0 items-center justify-center rounded-full font-bold text-white ${avatarColor(id)}`}>
       {label}
     </span>
+  )
+}
+
+function CopyButton({ text, className = '' }) {
+  const [copied, setCopied] = useState(false)
+
+  const handleCopy = useCallback(async () => {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text)
+      } else {
+        const ta = document.createElement('textarea')
+        ta.value = text
+        ta.style.position = 'fixed'
+        ta.style.left = '-9999px'
+        document.body.appendChild(ta)
+        ta.select()
+        document.execCommand('copy')
+        document.body.removeChild(ta)
+      }
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      const ta = document.createElement('textarea')
+      ta.value = text
+      ta.style.position = 'fixed'
+      ta.style.left = '-9999px'
+      document.body.appendChild(ta)
+      ta.select()
+      document.execCommand('copy')
+      document.body.removeChild(ta)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    }
+  }, [text])
+
+  return (
+    <button onClick={handleCopy} className={`transition-colors ${className}`}>
+      {copied ? (
+        <span className="inline-flex items-center gap-1 text-emerald-600">
+          <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+          Copied
+        </span>
+      ) : (
+        <span className="inline-flex items-center gap-1 text-zinc-500 hover:text-zinc-700">
+          <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+          Copy
+        </span>
+      )}
+    </button>
   )
 }
 
@@ -94,10 +144,6 @@ export default function App() {
     setReadIds(new Set())
     setRevealKeys(false)
     setMenuOpen(false)
-  }
-
-  function copy(text) {
-    navigator.clipboard?.writeText(text).catch(() => {})
   }
 
   async function handleSend() {
@@ -172,13 +218,11 @@ export default function App() {
 
   return (
     <div className="flex h-screen flex-col bg-zinc-100 text-zinc-800">
-      {/* top bar */}
       <header className="relative z-30 flex items-center border-b border-zinc-200 bg-white px-4 h-16">
         <div className="flex items-center gap-3">
           <span className="text-red-500 text-2xl font-black">S</span>
           <span className="text-base font-medium text-zinc-600 hidden sm:block">Session Mail</span>
         </div>
-
         <div className="ml-auto flex items-center gap-3">
           {keys ? (
             <button onClick={() => { setMenuOpen((o) => !o); setRevealKeys(false) }} className="rounded-full hover:ring-2 hover:ring-zinc-200 transition-all">
@@ -190,8 +234,6 @@ export default function App() {
             </button>
           )}
         </div>
-
-        {/* account menu */}
         {menuOpen && keys && (
           <>
             <div className="fixed inset-0 z-30" onClick={() => setMenuOpen(false)} />
@@ -207,19 +249,19 @@ export default function App() {
                 <div className="rounded-lg bg-zinc-50 p-3">
                   <p className="text-[11px] font-medium text-zinc-400 mb-1">Account ID</p>
                   <p className="text-[11px] font-mono break-all leading-relaxed">{keys.accountId}</p>
-                  <button onClick={() => copy(keys.accountId)} className="mt-2 text-[11px] text-red-500 hover:text-red-600">Copy</button>
+                  <div className="mt-2"><CopyButton text={keys.accountId} /></div>
                 </div>
                 {revealKeys ? (
                   <div className="space-y-2">
                     <div className="rounded-lg bg-zinc-50 p-3">
                       <p className="text-[11px] font-medium text-zinc-400 mb-1">Public key</p>
                       <p className="text-[10px] font-mono break-all leading-relaxed text-zinc-600">{keys.publicKeyHex}</p>
-                      <button onClick={() => copy(keys.publicKeyHex)} className="mt-2 text-[11px] text-red-500 hover:text-red-600">Copy</button>
+                      <div className="mt-2"><CopyButton text={keys.publicKeyHex} /></div>
                     </div>
                     <div className="rounded-lg bg-zinc-50 p-3">
                       <p className="text-[11px] font-medium text-zinc-400 mb-1">Private key</p>
                       <p className="text-[10px] font-mono break-all leading-relaxed text-red-600">{keys.secretKeyHex}</p>
-                      <button onClick={() => copy(keys.secretKeyHex)} className="mt-2 text-[11px] text-red-500 hover:text-red-600">Copy</button>
+                      <div className="mt-2"><CopyButton text={keys.secretKeyHex} /></div>
                     </div>
                   </div>
                 ) : (
@@ -237,7 +279,6 @@ export default function App() {
       </header>
 
       <div className="flex min-h-0 flex-1">
-        {/* sidebar */}
         <aside className="flex w-56 shrink-0 flex-col bg-white border-r border-zinc-200">
           <div className="p-3">
             <button
@@ -278,7 +319,6 @@ export default function App() {
           </div>
         </aside>
 
-        {/* list */}
         <section className="w-80 shrink-0 overflow-y-auto bg-white border-r border-zinc-200">
           <div className="sticky top-0 border-b border-zinc-100 bg-white/95 backdrop-blur px-4 py-3">
             <p className="text-sm font-semibold">{view === 'inbox' ? 'Inbox' : 'Sent'}</p>
@@ -294,6 +334,7 @@ export default function App() {
                 const isSent = view === 'sent'
                 const title = isSent ? m.subject : m.ok ? m.mail.subject : '(unreadable)'
                 const who = isSent ? m.to : m.ok ? m.mail.from : m.recipient
+                const preview = isSent ? m.body : m.ok ? m.mail.body : m.error
                 const active = m.id === selectedId
                 const unreadRow = !isSent && !readIds.has(m.id)
                 return (
@@ -302,14 +343,17 @@ export default function App() {
                     onClick={() => openMsg(m)}
                     className={`w-full border-b border-zinc-100 px-4 py-3 text-left transition-colors ${active ? 'bg-red-50' : 'hover:bg-zinc-50'}`}
                   >
-                    <div className="flex items-center gap-3">
-                      <Avatar id={who} size="h-8 w-8 text-[10px]" />
+                    <div className="flex items-start gap-3">
+                      <Avatar id={who} size="h-9 w-9 text-[10px]" />
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center justify-between">
-                          <p className={`truncate text-[13px] ${unreadRow ? 'font-semibold' : ''}`}>{short(who, 18)}</p>
+                          <p className={`text-[13px] truncate ${unreadRow ? 'font-semibold' : ''}`}>
+                            {isSent ? 'To: ' : ''}{short(who, 18)}
+                          </p>
                           <span className="ml-2 shrink-0 text-[11px] text-zinc-400">{fmtTime(isSent ? m.at : m.ok ? m.mail.timestamp : m.created_at)}</span>
                         </div>
-                        <p className={`truncate text-[13px] mt-0.5 ${unreadRow ? 'font-semibold text-zinc-800' : 'text-zinc-500'}`}>{title || '(no subject)'}</p>
+                        <p className={`text-[13px] font-medium mt-0.5 truncate ${unreadRow ? 'text-zinc-800' : 'text-zinc-600'}`}>{title || '(no subject)'}</p>
+                        <p className="text-[12px] text-zinc-400 mt-0.5 truncate">{preview ? preview.slice(0, 60) : ''}</p>
                       </div>
                     </div>
                   </button>
@@ -319,7 +363,6 @@ export default function App() {
           )}
         </section>
 
-        {/* reading pane */}
         <main className="min-w-0 flex-1 overflow-y-auto bg-white">
           {!selected ? (
             <div className="flex h-full flex-col items-center justify-center text-zinc-300">
@@ -328,38 +371,96 @@ export default function App() {
             </div>
           ) : view === 'sent' ? (
             <article className="mx-auto max-w-2xl p-8">
-              <h2 className="text-2xl font-semibold">{selected.subject || '(no subject)'}</h2>
-              <div className="mt-4 flex items-center gap-3 rounded-lg bg-zinc-50 p-3">
-                <Avatar id={selected.to} size="h-10 w-10 text-xs" />
-                <div className="min-w-0">
-                  <p className="text-sm font-medium">To: <span className="font-mono text-zinc-500">{short(selected.to, 16)}</span></p>
-                  <p className="text-xs text-zinc-400">{fmtTime(selected.at)}</p>
+              <h1 className="text-2xl font-bold text-zinc-900">{selected.subject || '(no subject)'}</h1>
+              <div className="mt-5 rounded-xl border border-zinc-200 bg-zinc-50 p-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <Avatar id={keys?.accountId} size="h-10 w-10 text-xs" />
+                    <div>
+                      <p className="text-sm font-semibold text-zinc-800">You</p>
+                      <p className="text-[11px] font-mono text-zinc-400">{short(keys?.accountId, 14)}</p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xs text-zinc-400">{fmtTime(selected.at)}</p>
+                    <div className="flex items-center gap-1 mt-1">
+                      <svg className="h-3.5 w-3.5 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                      <span className="text-[11px] text-emerald-600 font-medium">Sent</span>
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-3 flex items-center gap-2 border-t border-zinc-200 pt-3">
+                  <span className="text-[11px] font-medium text-zinc-400 uppercase tracking-wide">To</span>
+                  <div className="flex items-center gap-2">
+                    <Avatar id={selected.to} size="h-5 w-5 text-[8px]" />
+                    <span className="text-[12px] font-mono text-zinc-600">{short(selected.to, 16)}</span>
+                  </div>
                 </div>
               </div>
-              <p className="mt-6 whitespace-pre-wrap text-[15px] leading-relaxed text-zinc-700">{selected.body}</p>
+              <div className="mt-6 px-1">
+                <p className="whitespace-pre-wrap text-[15px] leading-relaxed text-zinc-700">{selected.body}</p>
+              </div>
+              <div className="mt-8 pt-4 border-t border-zinc-100">
+                <p className="text-[11px] text-zinc-300 font-mono">End of message</p>
+              </div>
             </article>
           ) : !selected.ok ? (
             <div className="flex flex-col items-center justify-center h-full py-16">
-              <p className="text-red-400 text-sm">Failed to decrypt this message.</p>
-              <p className="text-xs text-zinc-400 mt-1">{selected.error}</p>
+              <div className="w-16 h-16 rounded-full bg-red-50 flex items-center justify-center mb-4">
+                <svg className="h-8 w-8 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z" /></svg>
+              </div>
+              <p className="text-sm font-medium text-zinc-500">Failed to decrypt</p>
+              <p className="text-xs text-zinc-400 mt-1 max-w-xs text-center">{selected.error}</p>
             </div>
           ) : (
             <article className="mx-auto max-w-2xl p-8">
-              <h2 className="text-2xl font-semibold">{selected.mail.subject || '(no subject)'}</h2>
-              <div className="mt-4 flex items-center gap-3 rounded-lg bg-zinc-50 p-3">
-                <Avatar id={selected.mail.from} size="h-10 w-10 text-xs" />
-                <div className="min-w-0">
-                  <p className="text-sm font-medium truncate font-mono">{short(selected.mail.from, 16)}</p>
-                  <p className="text-xs text-zinc-400">To: {short(selected.mail.to, 16)} · {fmtTime(selected.mail.timestamp)}</p>
+              <h1 className="text-2xl font-bold text-zinc-900">{selected.mail.subject || '(no subject)'}</h1>
+              <div className="mt-5 rounded-xl border border-zinc-200 bg-zinc-50 p-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <Avatar id={selected.mail.from} size="h-10 w-10 text-xs" />
+                    <div>
+                      <p className="text-sm font-semibold text-zinc-800">From</p>
+                      <p className="text-[11px] font-mono text-zinc-400">{short(selected.mail.from, 14)}</p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xs text-zinc-400">{fmtTime(selected.mail.timestamp)}</p>
+                    <div className="flex items-center gap-1 mt-1">
+                      <svg className="h-3.5 w-3.5 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                      <span className="text-[11px] text-emerald-600 font-medium">Verified</span>
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-3 flex items-center gap-2 border-t border-zinc-200 pt-3">
+                  <span className="text-[11px] font-medium text-zinc-400 uppercase tracking-wide">To</span>
+                  <div className="flex items-center gap-2">
+                    <Avatar id={selected.mail.to} size="h-5 w-5 text-[8px]" />
+                    <span className="text-[12px] font-mono text-zinc-600">{short(selected.mail.to, 16)}</span>
+                  </div>
+                  <span className="text-zinc-300 mx-1">·</span>
+                  <div className="flex items-center gap-1">
+                    <svg className="h-3.5 w-3.5 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>
+                    <span className="text-[11px] text-emerald-600">Encrypted</span>
+                  </div>
                 </div>
               </div>
-              <p className="mt-6 whitespace-pre-wrap text-[15px] leading-relaxed text-zinc-700">{selected.mail.body}</p>
+              <div className="mt-6 px-1">
+                <p className="whitespace-pre-wrap text-[15px] leading-relaxed text-zinc-700">{selected.mail.body}</p>
+              </div>
+              <div className="mt-8 pt-4 border-t border-zinc-100 flex items-center gap-4">
+                <p className="text-[11px] text-zinc-300 font-mono">End of message</p>
+                <div className="flex-1" />
+                <div className="flex items-center gap-1.5">
+                  <svg className="h-3.5 w-3.5 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
+                  <span className="text-[11px] text-emerald-600 font-medium">Signature verified</span>
+                </div>
+              </div>
             </article>
           )}
         </main>
       </div>
 
-      {/* compose */}
       {composing && (
         <div className="fixed bottom-0 right-6 z-50 w-[32rem] max-w-[calc(100vw-2rem)] rounded-t-xl border border-zinc-200 bg-white shadow-2xl overflow-hidden">
           <div className="flex items-center justify-between bg-zinc-800 px-4 py-2.5 text-sm font-medium text-white">
