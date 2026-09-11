@@ -248,7 +248,7 @@ func TestOnionRoutingThreeHopsE2E(t *testing.T) {
 
 func TestOnionRoutingWrongNodeKey(t *testing.T) {
 	keyA, privA, _ := crypto.GeneratePublicPrivatePair()
-	keyB, privB, _ := crypto.GeneratePublicPrivatePair()
+	_, privB, _ := crypto.GeneratePublicPrivatePair()
 	keyC, privC, _ := crypto.GeneratePublicPrivatePair()
 
 	srvA := node.NewServer(privA)
